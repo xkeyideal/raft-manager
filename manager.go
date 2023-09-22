@@ -149,11 +149,18 @@ func (m *manager) GetConfiguration(ctx context.Context, req *pb.GetConfiguration
 	if err := f.Error(); err != nil {
 		return nil, err
 	}
-	resp := &pb.GetConfigurationResponse{}
+
+	leader := m.r.Leader()
+
+	resp := &pb.GetConfigurationResponse{
+		Index: f.Index(),
+	}
+
 	for _, s := range f.Configuration().Servers {
 		cs := &pb.GetConfigurationResponse_Server{
 			Id:      string(s.ID),
 			Address: string(s.Address),
+			Leader:  s.Address == leader,
 		}
 		switch s.Suffrage {
 		case raft.Voter, raft.Nonvoter, raft.Staging:

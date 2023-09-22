@@ -80,9 +80,13 @@ message GetConfigurationResponse {
 		string suffrage = 1;
 		string id = 2;
 		string address = 3;
+		bool leader = 4;
 	}
 
 	repeated Server servers = 1;
+
+	// Index has the Raft index of this configuration.
+	uint64 index = 2;
 }
 
 
