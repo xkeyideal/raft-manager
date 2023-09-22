@@ -82,6 +82,7 @@ func do() error {
 
 	target := flag.Arg(0) // raft-server grpc endpoint
 	command := flag.Arg(1)
+
 	// Look up the command as CamelCase and as-is (usually snake_case).
 	m := methods.ByName(protoreflect.Name(command))
 	if m == nil {
@@ -155,5 +156,6 @@ func do() error {
 			return err
 		}
 	}
+
 	return nil
 }

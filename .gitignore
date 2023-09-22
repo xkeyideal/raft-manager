@@ -75,7 +75,7 @@ $RECYCLE.BIN/
 
 
 # End of https://www.gitignore.io/api/windows,osx,linux,code
-raft-manager
+cmd/manager
 /test
 testdata
 data
