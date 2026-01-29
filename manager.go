@@ -2,9 +2,8 @@ package raftmanager
 
 import (
 	"context"
-	"crypto/sha1"
+	"crypto/rand"
 	"fmt"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -35,20 +34,55 @@ func timeout(ctx context.Context) time.Duration {
 	return 0
 }
 
+const (
+	// operationTTL 定义操作 token 的过期时间
+	operationTTL = 10 * time.Minute
+)
+
 var (
-	mtx        sync.Mutex
+	mtx        sync.RWMutex
 	operations = map[string]*future{}
 )
 
+func init() {
+	// 启动后台清理过期 token 的 goroutine
+	go cleanupExpiredOperations()
+}
+
+func cleanupExpiredOperations() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		now := time.Now()
+		mtx.Lock()
+		for token, f := range operations {
+			if now.Sub(f.createdAt) > operationTTL {
+				delete(operations, token)
+			}
+		}
+		mtx.Unlock()
+	}
+}
+
 type future struct {
-	f   raft.Future
-	mtx sync.Mutex
+	f         raft.Future
+	mtx       sync.Mutex
+	createdAt time.Time
+}
+
+func generateSecureToken() string {
+	b := make([]byte, 20)
+	if _, err := rand.Read(b); err != nil {
+		// fallback to timestamp-based token if crypto/rand fails
+		return fmt.Sprintf("%x", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", b)
 }
 
 func toFuture(f raft.Future) (*pb.Future, error) {
-	token := fmt.Sprintf("%x", sha1.Sum([]byte(fmt.Sprintf("%d", rand.Uint64()))))
+	token := generateSecureToken()
 	mtx.Lock()
-	operations[token] = &future{f: f}
+	operations[token] = &future{f: f, createdAt: time.Now()}
 	mtx.Unlock()
 	return &pb.Future{
 		OperationToken: token,
@@ -56,15 +90,29 @@ func toFuture(f raft.Future) (*pb.Future, error) {
 }
 
 func (m *manager) Await(ctx context.Context, req *pb.Future) (*pb.AwaitResponse, error) {
-	mtx.Lock()
+	mtx.RLock()
 	f, ok := operations[req.GetOperationToken()]
-	mtx.Unlock()
+	mtx.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("token %q unknown", req.GetOperationToken())
 	}
-	f.mtx.Lock()
-	err := f.f.Error()
-	f.mtx.Unlock()
+
+	// 支持 context 取消
+	done := make(chan struct{})
+	var err error
+	go func() {
+		f.mtx.Lock()
+		err = f.f.Error()
+		f.mtx.Unlock()
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-done:
+	}
+
 	if err != nil {
 		return &pb.AwaitResponse{
 			Error: err.Error(),
